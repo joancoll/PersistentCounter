@@ -21,24 +21,39 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
+import androidx.datastore.preferences.core.*
+import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+
+// Crear un DataStore
+val Context.dataStore by preferencesDataStore(name = "CounterPrefs")
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            CounterApp(applicationContext)
+            // Escull quina versió vols utilitzar
+            val useDataStore = true // Canvia a `false` per utilitzar SharedPreferences
+            if (useDataStore) {
+                CounterAppDataStore(this)
+            } else {
+                CounterAppSharedPreferences(this)
+            }
         }
     }
 }
 
+// Versió amb SharedPreferences
 @Composable
-fun CounterApp(context: Context) {
+fun CounterAppSharedPreferences(context: Context) {
     // Obtenir les SharedPreferences
     val sharedPreferences = context.getSharedPreferences("CounterPrefs", Context.MODE_PRIVATE)
 
@@ -53,13 +68,77 @@ fun CounterApp(context: Context) {
 
     LaunchedEffect(isRunning) {
         while (isRunning) {
-            delay(1000L) // Cada segon
+            kotlinx.coroutines.delay(1000L) // Cada segon
             counter++
             saveCounter(counter) // Guardar el valor actualitzat
         }
     }
 
-    // Disseny de la interfície d'usuari
+    CounterAppUI(counter, isRunning, onToggleRunning = {
+        isRunning = !isRunning
+    }, onReset = {
+        isRunning = false
+        counter = 0
+        saveCounter(0)
+    })
+}
+
+// Versió amb DataStore
+@Composable
+fun CounterAppDataStore(context: Context) {
+    val counterKey = intPreferencesKey("counter") // Clau del comptador
+    val dataStore = context.dataStore
+
+    // Estat del comptador
+    var counter by remember { mutableStateOf(0) }
+    var isRunning by rememberSaveable { mutableStateOf(false) }
+
+    // Coroutines per llegir i escriure del DataStore
+    val coroutineScope = rememberCoroutineScope()
+
+    // Llegir el valor inicial del comptador
+    LaunchedEffect(dataStore) {
+        dataStore.data.map { preferences ->
+            preferences[counterKey] ?: 0
+        }.collectLatest { savedCounter ->
+            counter = savedCounter
+        }
+    }
+
+    // Funció per guardar el valor del comptador al DataStore
+    fun saveCounter(value: Int) {
+        coroutineScope.launch {
+            dataStore.edit { preferences ->
+                preferences[counterKey] = value
+            }
+        }
+    }
+
+    LaunchedEffect(isRunning) {
+        while (isRunning) {
+            kotlinx.coroutines.delay(1000L) // Cada segon
+            counter++
+            saveCounter(counter) // Guardar el valor actualitzat
+        }
+    }
+
+    CounterAppUI(counter, isRunning, onToggleRunning = {
+        isRunning = !isRunning
+    }, onReset = {
+        isRunning = false
+        counter = 0
+        saveCounter(0)
+    })
+}
+
+// Interfície comuna per a ambdues versions
+@Composable
+fun CounterAppUI(
+    counter: Int,
+    isRunning: Boolean,
+    onToggleRunning: () -> Unit,
+    onReset: () -> Unit
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -92,31 +171,22 @@ fun CounterApp(context: Context) {
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth() // Utilitza tot l'ample disponible
+            Button(
+                onClick = onToggleRunning,
+                modifier = Modifier.weight(1f) // Utilitza el mateix espai per a tots els botons
             ) {
-                Button(
-                    onClick = { isRunning = !isRunning },
-                    modifier = Modifier.weight(1f) // Utilitza el mateix espai per a tots els botons
-                ) {
-                    Text(text = if (isRunning) "Pausa" else if (counter > 0) "Continuar" else "Iniciar")
-                }
-                Button(
-                    onClick = {
-                        isRunning = false
-                        counter = 0
-                        saveCounter(0)
-                    },
-                    modifier = Modifier.weight(1f) // Utilitza el mateix espai per a tots els botons
-                ) {
-                    Text(text = "Reset")
-                }
+                Text(text = if (isRunning) "Pausa" else if (counter > 0) "Continuar" else "Iniciar")
+            }
+            Button(
+                onClick = onReset,
+                modifier = Modifier.weight(1f) // Utilitza el mateix espai per a tots els botons
+            ) {
+                Text(text = "Reset")
             }
         }
     }
 }
+
 
 
 
